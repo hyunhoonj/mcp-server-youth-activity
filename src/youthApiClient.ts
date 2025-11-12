@@ -122,7 +122,7 @@ export class YouthApiClient {
     keyword?: string; // 검색어
   }): Promise<any> {
     try {
-      const response = await this.client.get("/getYouthActList", {
+      const response = await this.client.get("/getJtvtsProgrmList", {
         params: {
           serviceKey: this.serviceKey,
           pageNo: params.pageNo || 1,
