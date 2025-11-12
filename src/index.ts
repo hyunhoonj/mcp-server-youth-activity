@@ -10,17 +10,33 @@ import {
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import dotenv from "dotenv";
+import { YouthApiClient } from "./youthApiClient.js";
+
+// 환경 변수 로드
+dotenv.config();
 
 /**
- * MCP 테스트 서버
- * 기본적인 도구(Tools), 리소스(Resources), 프롬프트(Prompts)를 제공합니다.
+ * MCP 청소년 활동 정보 서버
+ * 공공데이터포털 청소년 활동 정보 API를 활용한 MCP 서버
  */
+
+// 환경 변수 검증
+const serviceKey = process.env.YOUTH_API_SERVICE_KEY;
+if (!serviceKey) {
+  console.error("오류: YOUTH_API_SERVICE_KEY 환경 변수가 설정되지 않았습니다.");
+  console.error(".env 파일을 생성하고 API 키를 설정해주세요.");
+  process.exit(1);
+}
+
+// API 클라이언트 초기화
+const youthApiClient = new YouthApiClient({ serviceKey });
 
 // 서버 인스턴스 생성
 const server = new Server(
   {
-    name: "mcp-test-server",
-    version: "1.0.0",
+    name: "youth-activity-server",
+    version: "2.0.0",
   },
   {
     capabilities: {
@@ -38,6 +54,76 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
+      // 청소년 활동 API 관련 도구
+      {
+        name: "get_sido_list",
+        description: "청소년 활동 정보 시도(광역자치단체) 목록을 조회합니다",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pageNo: {
+              type: "number",
+              description: "페이지 번호 (기본값: 1)",
+            },
+            numOfRows: {
+              type: "number",
+              description: "한 페이지 결과 수 (기본값: 100)",
+            },
+          },
+        },
+      },
+      {
+        name: "get_sigungu_list",
+        description: "특정 시도의 시군구(기초자치단체) 목록을 조회합니다",
+        inputSchema: {
+          type: "object",
+          properties: {
+            ctpvCode: {
+              type: "string",
+              description: "시도코드 (예: 11 - 서울특별시)",
+            },
+            pageNo: {
+              type: "number",
+              description: "페이지 번호 (기본값: 1)",
+            },
+            numOfRows: {
+              type: "number",
+              description: "한 페이지 결과 수 (기본값: 100)",
+            },
+          },
+          required: ["ctpvCode"],
+        },
+      },
+      {
+        name: "search_youth_activities",
+        description: "청소년 활동 정보를 검색합니다. 지역, 키워드 등으로 필터링 가능합니다",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pageNo: {
+              type: "number",
+              description: "페이지 번호 (기본값: 1)",
+            },
+            numOfRows: {
+              type: "number",
+              description: "한 페이지 결과 수 (기본값: 10)",
+            },
+            schCtpvCode: {
+              type: "string",
+              description: "검색할 시도코드 (선택사항)",
+            },
+            schSigunguCode: {
+              type: "string",
+              description: "검색할 시군구코드 (선택사항)",
+            },
+            keyword: {
+              type: "string",
+              description: "검색 키워드 (선택사항)",
+            },
+          },
+        },
+      },
+      // 기본 유틸리티 도구
       {
         name: "echo",
         description: "입력받은 메시지를 그대로 반환합니다",
@@ -50,29 +136,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ["message"],
-        },
-      },
-      {
-        name: "calculate",
-        description: "간단한 수학 계산을 수행합니다 (덧셈, 뺄셈, 곱셈, 나눗셈)",
-        inputSchema: {
-          type: "object",
-          properties: {
-            operation: {
-              type: "string",
-              enum: ["add", "subtract", "multiply", "divide"],
-              description: "수행할 연산",
-            },
-            a: {
-              type: "number",
-              description: "첫 번째 숫자",
-            },
-            b: {
-              type: "number",
-              description: "두 번째 숫자",
-            },
-          },
-          required: ["operation", "a", "b"],
         },
       },
       {
@@ -93,71 +156,188 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
-  switch (name) {
-    case "echo": {
-      const message = args?.message as string;
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Echo: ${message}`,
-          },
-        ],
-      };
-    }
+  try {
+    switch (name) {
+      // 청소년 활동 API 도구들
+      case "get_sido_list": {
+        const pageNo = (args?.pageNo as number) || 1;
+        const numOfRows = (args?.numOfRows as number) || 100;
 
-    case "calculate": {
-      const { operation, a, b } = args as {
-        operation: string;
-        a: number;
-        b: number;
-      };
+        const result = await youthApiClient.getSidoList(pageNo, numOfRows);
 
-      let result: number;
-      switch (operation) {
-        case "add":
-          result = a + b;
-          break;
-        case "subtract":
-          result = a - b;
-          break;
-        case "multiply":
-          result = a * b;
-          break;
-        case "divide":
-          if (b === 0) {
-            throw new Error("0으로 나눌 수 없습니다");
-          }
-          result = a / b;
-          break;
-        default:
-          throw new Error(`알 수 없는 연산: ${operation}`);
+        // 결과 포맷팅
+        let resultText = `📍 시도 목록 (전체 ${result.totalCount}개)\n\n`;
+        if (Array.isArray(result.items)) {
+          result.items.forEach((item: any, index: number) => {
+            resultText += `${index + 1}. ${item.ctpvNm || "N/A"} (코드: ${
+              item.ctpvCode || "N/A"
+            })\n`;
+          });
+        } else if (result.items) {
+          // 단일 항목인 경우
+          resultText += `1. ${result.items.ctpvNm || "N/A"} (코드: ${
+            result.items.ctpvCode || "N/A"
+          })\n`;
+        } else {
+          resultText += "조회된 항목이 없습니다.\n";
+        }
+        resultText += `\n페이지: ${pageNo}/${Math.ceil(
+          result.totalCount / numOfRows
+        )}`;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: resultText,
+            },
+          ],
+        };
       }
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${a} ${operation} ${b} = ${result}`,
-          },
-        ],
-      };
-    }
+      case "get_sigungu_list": {
+        const ctpvCode = args?.ctpvCode as string;
+        const pageNo = (args?.pageNo as number) || 1;
+        const numOfRows = (args?.numOfRows as number) || 100;
 
-    case "get_time": {
-      const now = new Date();
-      return {
-        content: [
-          {
-            type: "text",
-            text: `현재 시간: ${now.toISOString()}\n로컬 시간: ${now.toLocaleString('ko-KR')}`,
-          },
-        ],
-      };
-    }
+        const result = await youthApiClient.getSigunguList(
+          ctpvCode,
+          pageNo,
+          numOfRows
+        );
 
-    default:
-      throw new Error(`알 수 없는 도구: ${name}`);
+        let resultText = `📍 시군구 목록 (전체 ${result.totalCount}개)\n\n`;
+        if (Array.isArray(result.items)) {
+          result.items.forEach((item: any, index: number) => {
+            resultText += `${index + 1}. ${item.sigunguNm || "N/A"} (코드: ${
+              item.sigunguCode || "N/A"
+            })\n`;
+          });
+        } else if (result.items) {
+          resultText += `1. ${result.items.sigunguNm || "N/A"} (코드: ${
+            result.items.sigunguCode || "N/A"
+          })\n`;
+        } else {
+          resultText += "조회된 항목이 없습니다.\n";
+        }
+        resultText += `\n페이지: ${pageNo}/${Math.ceil(
+          result.totalCount / numOfRows
+        )}`;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: resultText,
+            },
+          ],
+        };
+      }
+
+      case "search_youth_activities": {
+        const params = {
+          pageNo: (args?.pageNo as number) || 1,
+          numOfRows: (args?.numOfRows as number) || 10,
+          schCtpvCode: args?.schCtpvCode as string | undefined,
+          schSigunguCode: args?.schSigunguCode as string | undefined,
+          keyword: args?.keyword as string | undefined,
+        };
+
+        const result = await youthApiClient.searchActivities(params);
+
+        let resultText = `🎯 청소년 활동 검색 결과 (전체 ${result.totalCount}개)\n\n`;
+
+        if (Array.isArray(result.items)) {
+          result.items.forEach((item: any, index: number) => {
+            const itemNum = (params.pageNo - 1) * params.numOfRows + index + 1;
+            resultText += `${itemNum}. ${item.actTitle || "제목 없음"}\n`;
+            if (item.organNm)
+              resultText += `   기관: ${item.organNm}\n`;
+            if (item.actBeginDt || item.actEndDt)
+              resultText += `   기간: ${item.actBeginDt || "미정"} ~ ${
+                item.actEndDt || "미정"
+              }\n`;
+            if (item.actPlace)
+              resultText += `   장소: ${item.actPlace}\n`;
+            if (item.actTarget)
+              resultText += `   대상: ${item.actTarget}\n`;
+            if (item.actPart)
+              resultText += `   분야: ${item.actPart}\n`;
+            if (item.youthPolicyShortIntro)
+              resultText += `   소개: ${item.youthPolicyShortIntro}\n`;
+            resultText += "\n";
+          });
+        } else if (result.items) {
+          resultText += `1. ${result.items.actTitle || "제목 없음"}\n`;
+          if (result.items.organNm)
+            resultText += `   기관: ${result.items.organNm}\n`;
+          if (result.items.actBeginDt || result.items.actEndDt)
+            resultText += `   기간: ${result.items.actBeginDt || "미정"} ~ ${
+              result.items.actEndDt || "미정"
+            }\n`;
+          if (result.items.actPlace)
+            resultText += `   장소: ${result.items.actPlace}\n`;
+          resultText += "\n";
+        } else {
+          resultText += "검색된 활동이 없습니다.\n\n";
+        }
+
+        resultText += `페이지: ${params.pageNo}/${Math.ceil(
+          result.totalCount / params.numOfRows
+        )}`;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: resultText,
+            },
+          ],
+        };
+      }
+
+      // 기본 유틸리티 도구들
+      case "echo": {
+        const message = args?.message as string;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Echo: ${message}`,
+            },
+          ],
+        };
+      }
+
+      case "get_time": {
+        const now = new Date();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `현재 시간: ${now.toISOString()}\n로컬 시간: ${now.toLocaleString(
+                "ko-KR"
+              )}`,
+            },
+          ],
+        };
+      }
+
+      default:
+        throw new Error(`알 수 없는 도구: ${name}`);
+    }
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `오류 발생: ${errorMessage}`,
+        },
+      ],
+      isError: true,
+    };
   }
 });
 
@@ -169,16 +349,22 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
   return {
     resources: [
       {
-        uri: "test://info",
+        uri: "youth://info",
         mimeType: "text/plain",
         name: "서버 정보",
-        description: "MCP 테스트 서버의 기본 정보",
+        description: "청소년 활동 정보 서버의 기본 정보",
       },
       {
-        uri: "test://greeting",
+        uri: "youth://api-guide",
         mimeType: "text/plain",
-        name: "인사말",
-        description: "환영 메시지",
+        name: "API 가이드",
+        description: "공공데이터포털 청소년 활동 정보 API 사용 가이드",
+      },
+      {
+        uri: "youth://sido-codes",
+        mimeType: "text/plain",
+        name: "시도 코드표",
+        description: "주요 시도 코드 참조표",
       },
     ],
   };
@@ -191,31 +377,122 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
 
   switch (uri) {
-    case "test://info":
+    case "youth://info":
       return {
         contents: [
           {
             uri,
             mimeType: "text/plain",
-            text: `MCP 테스트 서버 v1.0.0
+            text: `청소년 활동 정보 MCP 서버 v2.0.0
 
-이 서버는 MCP (Model Context Protocol)의 기본 기능을 테스트하기 위한 서버입니다.
+이 서버는 공공데이터포털의 청소년 활동 정보 API를 활용한 MCP 서버입니다.
 
-제공 기능:
-- Tools: echo, calculate, get_time
-- Resources: info, greeting
-- Prompts: welcome, help`,
+📋 제공 기능:
+
+🔧 Tools (도구):
+- get_sido_list: 시도 목록 조회
+- get_sigungu_list: 시군구 목록 조회
+- search_youth_activities: 청소년 활동 검색
+- echo: 메시지 에코
+- get_time: 현재 시간 조회
+
+📦 Resources (리소스):
+- youth://info: 서버 정보
+- youth://api-guide: API 사용 가이드
+- youth://sido-codes: 시도 코드표
+
+💬 Prompts (프롬프트):
+- search-guide: 활동 검색 가이드
+- region-guide: 지역 코드 가이드
+
+📊 데이터 출처:
+공공데이터포털 - 여성가족부 청소년 활동 정보
+https://www.data.go.kr/`,
           },
         ],
       };
 
-    case "test://greeting":
+    case "youth://api-guide":
       return {
         contents: [
           {
             uri,
             mimeType: "text/plain",
-            text: "안녕하세요! MCP 테스트 서버에 오신 것을 환영합니다. 이 서버는 MCP 프로토콜의 기본 기능들을 시연합니다.",
+            text: `청소년 활동 정보 API 사용 가이드
+
+📌 기본 사용법:
+
+1. 시도 목록 조회:
+   - Tool: get_sido_list
+   - 전국의 시도(광역자치단체) 목록을 조회합니다
+   - 시도 코드를 확인하여 다음 단계에서 사용
+
+2. 시군구 목록 조회:
+   - Tool: get_sigungu_list
+   - 특정 시도의 시군구(기초자치단체) 목록을 조회합니다
+   - 파라미터: ctpvCode (시도코드)
+
+3. 청소년 활동 검색:
+   - Tool: search_youth_activities
+   - 다양한 조건으로 청소년 활동 정보를 검색합니다
+   - 선택 파라미터:
+     * keyword: 검색어
+     * schCtpvCode: 시도코드
+     * schSigunguCode: 시군구코드
+     * pageNo: 페이지 번호
+     * numOfRows: 페이지당 결과 수
+
+🔑 환경 설정:
+- .env 파일에 YOUTH_API_SERVICE_KEY 설정 필요
+- 공공데이터포털(www.data.go.kr)에서 API 키 발급
+
+💡 사용 예시:
+1. 서울시의 모든 활동 검색
+   schCtpvCode: "11"
+
+2. 키워드로 활동 검색
+   keyword: "봉사"
+
+3. 특정 지역의 특정 활동 검색
+   schCtpvCode: "11", keyword: "문화"`,
+          },
+        ],
+      };
+
+    case "youth://sido-codes":
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "text/plain",
+            text: `주요 시도 코드표
+
+📍 광역자치단체 코드:
+
+11 - 서울특별시
+21 - 부산광역시
+22 - 대구광역시
+23 - 인천광역시
+24 - 광주광역시
+25 - 대전광역시
+26 - 울산광역시
+29 - 세종특별자치시
+31 - 경기도
+32 - 강원도
+33 - 충청북도
+34 - 충청남도
+35 - 전라북도
+36 - 전라남도
+37 - 경상북도
+38 - 경상남도
+39 - 제주특별자치도
+
+💡 사용법:
+- get_sigungu_list에서 ctpvCode로 사용
+- search_youth_activities에서 schCtpvCode로 사용
+
+예: 서울시의 시군구 조회
+get_sigungu_list(ctpvCode: "11")`,
           },
         ],
       };
@@ -233,19 +510,19 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
   return {
     prompts: [
       {
-        name: "welcome",
-        description: "사용자를 환영하는 프롬프트",
+        name: "search-guide",
+        description: "청소년 활동 검색 방법을 안내하는 프롬프트",
         arguments: [
           {
-            name: "name",
-            description: "사용자 이름",
+            name: "region",
+            description: "관심 지역 (선택사항)",
             required: false,
           },
         ],
       },
       {
-        name: "help",
-        description: "서버 사용법을 안내하는 프롬프트",
+        name: "region-guide",
+        description: "지역 코드 조회 방법을 안내하는 프롬프트",
       },
     ],
   };
@@ -258,52 +535,103 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   switch (name) {
-    case "welcome": {
-      const userName = args?.name || "사용자";
+    case "search-guide": {
+      const region = args?.region || "";
+      const regionText = region ? `${region} 지역의 ` : "";
+
       return {
         messages: [
           {
             role: "user",
             content: {
               type: "text",
-              text: `${userName}님, MCP 테스트 서버에 오신 것을 환영합니다!
+              text: `청소년 활동 정보 검색 가이드
 
-이 서버는 다음과 같은 기능을 제공합니다:
-- 메시지 에코
-- 간단한 계산기
-- 현재 시간 조회
-- 서버 정보 및 인사말 리소스
+${regionText}청소년 활동 정보를 검색하는 방법을 안내합니다.
 
-무엇을 도와드릴까요?`,
+📋 검색 순서:
+
+1️⃣ 시도 목록 조회 (선택사항)
+   - get_sido_list 도구 사용
+   - 전국의 시도 목록과 코드를 확인합니다
+   ${region ? `- "${region}"의 코드를 확인하세요` : ""}
+
+2️⃣ 시군구 목록 조회 (선택사항)
+   - get_sigungu_list 도구 사용
+   - 특정 시도의 시군구 목록을 확인합니다
+   - 파라미터: ctpvCode (시도코드)
+
+3️⃣ 청소년 활동 검색
+   - search_youth_activities 도구 사용
+   - 다양한 조건으로 활동을 검색합니다
+
+   검색 옵션:
+   - keyword: 관심 키워드 (예: "봉사", "문화", "체험" 등)
+   - schCtpvCode: 시도 코드 (예: "11" - 서울)
+   - schSigunguCode: 시군구 코드
+   - numOfRows: 한 번에 볼 결과 수 (기본 10개)
+
+💡 검색 예시:
+- 서울시의 봉사활동 찾기:
+  schCtpvCode: "11", keyword: "봉사"
+
+- 전국의 문화 활동 찾기:
+  keyword: "문화"
+
+- 더 많은 결과 보기:
+  numOfRows: 20
+
+시작해볼까요? 어떤 활동을 찾고 계신가요?`,
             },
           },
         ],
       };
     }
 
-    case "help": {
+    case "region-guide": {
       return {
         messages: [
           {
             role: "user",
             content: {
               type: "text",
-              text: `MCP 테스트 서버 사용 가이드
+              text: `청소년 활동 지역 코드 조회 가이드
 
-📌 사용 가능한 도구 (Tools):
-1. echo - 메시지를 그대로 반환
-2. calculate - 수학 계산 (add, subtract, multiply, divide)
-3. get_time - 현재 시간 조회
+지역별 청소년 활동을 찾기 위해 필요한 지역 코드를 조회하는 방법입니다.
 
-📦 사용 가능한 리소스 (Resources):
-1. test://info - 서버 정보
-2. test://greeting - 환영 메시지
+🗺️ 시도(광역자치단체) 코드 확인:
 
-💬 사용 가능한 프롬프트 (Prompts):
-1. welcome - 환영 메시지
-2. help - 이 도움말
+방법 1: 직접 조회
+   - get_sido_list 도구를 사용하여 전체 시도 목록과 코드를 확인
 
-각 기능을 자유롭게 사용해보세요!`,
+방법 2: 리소스 참조
+   - youth://sido-codes 리소스에서 주요 시도 코드 참조
+
+주요 시도 코드:
+• 11 - 서울특별시
+• 21 - 부산광역시
+• 23 - 인천광역시
+• 31 - 경기도
+• 그 외 리소스에서 확인
+
+🏘️ 시군구(기초자치단체) 코드 확인:
+
+get_sigungu_list 도구 사용:
+   - 파라미터: ctpvCode (시도코드)
+   - 예: ctpvCode: "11" (서울시의 모든 구 조회)
+
+📝 사용 흐름:
+
+1. 관심 지역이 "서울 강남구"인 경우
+   ① get_sido_list로 서울시 코드 확인 → "11"
+   ② get_sigungu_list(ctpvCode: "11")로 강남구 코드 확인
+   ③ search_youth_activities에서 두 코드 모두 사용
+
+2. 관심 지역이 "경기도"인 경우
+   ① get_sido_list로 경기도 코드 확인 → "31"
+   ② search_youth_activities에서 schCtpvCode: "31" 사용
+
+어떤 지역의 청소년 활동을 찾고 계신가요?`,
             },
           },
         ],
